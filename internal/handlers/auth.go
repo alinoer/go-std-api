@@ -10,11 +10,13 @@ import (
 
 type AuthHandler struct {
 	userService service.UserService
+	authService *service.AuthService
 }
 
-func NewAuthHandler(userService service.UserService) *AuthHandler {
+func NewAuthHandler(userService service.UserService, authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{
 		userService: userService,
+		authService: authService,
 	}
 }
 
@@ -83,11 +85,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate JWT token
+	token, expiresIn, err := h.authService.GenerateToken(user.ID, user.Username)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Failed to generate token")
+		return
+	}
+
 	response := models.LoginResponse{
-		User: user,
-		// Note: In a real application, you would generate a JWT token here
-		// For this demo, we'll just return a success message
-		Token: "demo-token-" + user.ID.String(), // Simple demo token
+		User:        user,
+		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   expiresIn,
 	}
 
 	WriteJSON(w, http.StatusOK, response)

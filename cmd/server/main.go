@@ -43,11 +43,12 @@ func main() {
 	// Initialize services
 	userService := service.NewUserService(userRepo)
 	postService := service.NewPostService(postRepo, userRepo)
+	authService := service.NewAuthService(cfg.APISecretKey)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
 	postHandler := handlers.NewPostHandler(postService, userService)
-	authHandler := handlers.NewAuthHandler(userService)
+	authHandler := handlers.NewAuthHandler(userService, authService)
 
 	// Setup router
 	r := chi.NewRouter()
@@ -80,9 +81,9 @@ func main() {
 		r.Get("/posts", postHandler.ListPosts)
 		r.Get("/posts/{id}", postHandler.GetPost)
 
-		// Protected routes (require authentication)
+		// Protected routes (require JWT authentication)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.AuthMiddleware(cfg.APISecretKey))
+			r.Use(middleware.JWTAuthMiddleware(authService))
 
 			// Protected post routes
 			r.Post("/posts", postHandler.CreatePost)
