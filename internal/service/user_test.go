@@ -20,6 +20,30 @@ type MockUserRepository struct {
 	listError           error
 	listPaginatedError  error
 	listPaginatedTotal  int64
+	
+	// Call tracking for verification
+	createCalls         []CreateUserCall
+	getByIDCalls        []GetByIDCall
+	getByUsernameCalls  []GetByUsernameCall
+	listCalls           int
+	listPaginatedCalls  []ListPaginatedCall
+}
+
+// Call structures for tracking method calls
+type CreateUserCall struct {
+	User *models.User
+}
+
+type GetByIDCall struct {
+	ID uuid.UUID
+}
+
+type GetByUsernameCall struct {
+	Username string
+}
+
+type ListPaginatedCall struct {
+	Pagination *models.PaginationParams
 }
 
 func NewMockUserRepository() *MockUserRepository {
@@ -30,6 +54,7 @@ func NewMockUserRepository() *MockUserRepository {
 }
 
 func (m *MockUserRepository) Create(ctx context.Context, user *models.User) error {
+	m.createCalls = append(m.createCalls, CreateUserCall{User: user})
 	if m.createError != nil {
 		return m.createError
 	}
@@ -39,6 +64,7 @@ func (m *MockUserRepository) Create(ctx context.Context, user *models.User) erro
 }
 
 func (m *MockUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
+	m.getByIDCalls = append(m.getByIDCalls, GetByIDCall{ID: id})
 	if m.getByIDError != nil {
 		return nil, m.getByIDError
 	}
@@ -50,6 +76,7 @@ func (m *MockUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 }
 
 func (m *MockUserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
+	m.getByUsernameCalls = append(m.getByUsernameCalls, GetByUsernameCall{Username: username})
 	if m.getByUsernameError != nil {
 		return nil, m.getByUsernameError
 	}
@@ -61,6 +88,7 @@ func (m *MockUserRepository) GetByUsername(ctx context.Context, username string)
 }
 
 func (m *MockUserRepository) List(ctx context.Context) ([]*models.User, error) {
+	m.listCalls++
 	if m.listError != nil {
 		return nil, m.listError
 	}
@@ -72,6 +100,7 @@ func (m *MockUserRepository) List(ctx context.Context) ([]*models.User, error) {
 }
 
 func (m *MockUserRepository) ListPaginated(ctx context.Context, pagination *models.PaginationParams) ([]*models.User, int64, error) {
+	m.listPaginatedCalls = append(m.listPaginatedCalls, ListPaginatedCall{Pagination: pagination})
 	if m.listPaginatedError != nil {
 		return nil, 0, m.listPaginatedError
 	}
@@ -116,6 +145,53 @@ func (m *MockUserRepository) SetListPaginatedTotal(total int64) {
 func (m *MockUserRepository) AddUser(user *models.User) {
 	m.users[user.ID] = user
 	m.usersByUsername[user.Username] = user
+}
+
+// Verification methods for testing mock interactions
+func (m *MockUserRepository) GetCreateCallCount() int {
+	return len(m.createCalls)
+}
+
+func (m *MockUserRepository) GetGetByIDCallCount() int {
+	return len(m.getByIDCalls)
+}
+
+func (m *MockUserRepository) GetGetByUsernameCallCount() int {
+	return len(m.getByUsernameCalls)
+}
+
+func (m *MockUserRepository) GetListCallCount() int {
+	return m.listCalls
+}
+
+func (m *MockUserRepository) GetListPaginatedCallCount() int {
+	return len(m.listPaginatedCalls)
+}
+
+func (m *MockUserRepository) WasCalledWithUsername(username string) bool {
+	for _, call := range m.getByUsernameCalls {
+		if call.Username == username {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MockUserRepository) WasCreateCalledWithUser(user *models.User) bool {
+	for _, call := range m.createCalls {
+		if call.User.Username == user.Username {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MockUserRepository) Reset() {
+	m.createCalls = nil
+	m.getByIDCalls = nil
+	m.getByUsernameCalls = nil
+	m.listCalls = 0
+	m.listPaginatedCalls = nil
 }
 
 func TestNewUserService(t *testing.T) {
@@ -493,5 +569,119 @@ func TestUserService_ListUsersPaginated(t *testing.T) {
 				t.Errorf("expected total %d, got %d", tt.expectedTotal, response.Pagination.Total)
 			}
 		})
+	}
+}
+
+func TestUserService_CreateUser_MockVerification(t *testing.T) {
+	mockRepo := NewMockUserRepository()
+	service := NewUserService(mockRepo)
+
+	// Test successful user creation
+	request := &models.CreateUserRequest{
+		Username: "testuser",
+		Password: "password123",
+	}
+
+	user, err := service.CreateUser(context.Background(), request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify mock interactions
+	if mockRepo.GetGetByUsernameCallCount() != 1 {
+		t.Errorf("expected GetByUsername to be called once, got %d calls", mockRepo.GetGetByUsernameCallCount())
+	}
+
+	if !mockRepo.WasCalledWithUsername("testuser") {
+		t.Error("expected GetByUsername to be called with 'testuser'")
+	}
+
+	if mockRepo.GetCreateCallCount() != 1 {
+		t.Errorf("expected Create to be called once, got %d calls", mockRepo.GetCreateCallCount())
+	}
+
+	if !mockRepo.WasCreateCalledWithUser(user) {
+		t.Error("expected Create to be called with the created user")
+	}
+
+	// Reset mock and test with existing user
+	mockRepo.Reset()
+	existingUser := &models.User{
+		ID:       uuid.New(),
+		Username: "existinguser",
+	}
+	mockRepo.AddUser(existingUser)
+
+	request2 := &models.CreateUserRequest{
+		Username: "existinguser",
+		Password: "password123",
+	}
+
+	_, err = service.CreateUser(context.Background(), request2)
+	if err == nil {
+		t.Error("expected error for duplicate username, got nil")
+	}
+
+	// Verify that GetByUsername was called but Create was not
+	if mockRepo.GetGetByUsernameCallCount() != 1 {
+		t.Errorf("expected GetByUsername to be called once after reset, got %d calls", mockRepo.GetGetByUsernameCallCount())
+	}
+
+	if mockRepo.GetCreateCallCount() != 0 {
+		t.Errorf("expected Create not to be called after duplicate check, got %d calls", mockRepo.GetCreateCallCount())
+	}
+}
+
+// Benchmark tests for service layer performance
+func BenchmarkUserService_CreateUser(b *testing.B) {
+	mockRepo := NewMockUserRepository()
+	service := NewUserService(mockRepo)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		request := &models.CreateUserRequest{
+			Username: fmt.Sprintf("user%d", i),
+			Password: "password123",
+		}
+		service.CreateUser(context.Background(), request)
+	}
+}
+
+func BenchmarkUserService_GetUser(b *testing.B) {
+	mockRepo := NewMockUserRepository()
+	service := NewUserService(mockRepo)
+
+	// Setup test data
+	testUser := &models.User{
+		ID:       uuid.New(),
+		Username: "benchuser",
+	}
+	mockRepo.AddUser(testUser)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		service.GetUser(context.Background(), testUser.ID)
+	}
+}
+
+func BenchmarkUserService_ValidateCredentials(b *testing.B) {
+	mockRepo := NewMockUserRepository()
+	service := NewUserService(mockRepo)
+
+	// Setup test user with hashed password
+	hasher := sha256.New()
+	hasher.Write([]byte("password123"))
+	passwordHash := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	testUser := &models.User{
+		ID:           uuid.New(),
+		Username:     "benchuser",
+		PasswordHash: passwordHash,
+	}
+	mockRepo.AddUser(testUser)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		service.ValidateCredentials(context.Background(), "benchuser", "password123")
 	}
 }
