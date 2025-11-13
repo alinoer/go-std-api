@@ -17,3 +17,8 @@ type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
+type UpdateUserRequest struct {
+	Username *string `json:"username,omitempty"`
+	Password *string `json:"password,omitempty"`
+}
